@@ -1,0 +1,24 @@
+[package]
+name = "merc-mbt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "merc-mbt"
+path = "src/main.rs"
+# Avoid a rustdoc output filename collision with the `merc_mbt` library crate.
+doc = false
+
+[dependencies]
+mcrl2.workspace = true
+merc_lps.workspace = true
+merc_mbt.workspace = true
+merc_tools.workspace = true
+merc_utilities.workspace = true
+merc_unsafety.workspace = true
+
+clap.workspace = true
+env_logger.workspace = true
+log.workspace = true

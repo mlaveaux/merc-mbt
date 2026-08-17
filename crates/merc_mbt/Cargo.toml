@@ -1,0 +1,30 @@
+[package]
+name = "merc_mbt"
+description = "Model-based testing for mCRL2 linear process specifications."
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+mcrl2.workspace = true
+merc_explore.workspace = true
+merc_lps.workspace = true
+merc_lts.workspace = true
+merc_utilities.workspace = true
+
+log.workspace = true
+rustc-hash.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tungstenite.workspace = true
+
+[dev-dependencies]
+env_logger.workspace = true
+merc_io.workspace = true
+tempfile.workspace = true
+test-case.workspace = true
