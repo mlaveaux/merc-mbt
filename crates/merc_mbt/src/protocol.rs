@@ -5,6 +5,11 @@ use serde_json::Value;
 use crate::action::WireMultiAction;
 use crate::error::ErrorCode;
 
+/// The protocol version this tool speaks (mCRL2 MBT <-> Adapter Protocol).
+/// Compared against the adapter's `hello.protocol_version` on major.minor
+/// only, per the protocol's compatibility rule.
+pub const PROTOCOL_VERSION: &str = "0.2";
+
 /// A message received from the adapter, dispatched on the envelope's `type`
 /// field. Unknown top-level fields on any variant are ignored, per the
 /// protocol's forward-compatibility rule.

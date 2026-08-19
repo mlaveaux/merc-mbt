@@ -11,14 +11,15 @@ use mcrl2::set_reporting_level;
 use mcrl2::verbosity_to_log_level;
 use merc_lps::ExplicitLinearProcessSpecification;
 use merc_mbt::LpsInfo;
+use merc_mbt::ModelState;
+use merc_mbt::PROTOCOL_VERSION;
 use merc_mbt::PeerInfo;
+use merc_mbt::SessionLimits;
 use merc_mbt::ToolHello;
 use merc_mbt::ToolMessage;
-use merc_mbt::close_session;
 use merc_mbt::connect_adapter;
 use merc_mbt::parse_partition;
-use merc_mbt::read_frame;
-use merc_mbt::send_message;
+use merc_mbt::run_session;
 use merc_tools::VerbosityFlag;
 use merc_tools::Version;
 use merc_tools::VersionFlag;
@@ -26,9 +27,6 @@ use merc_tools::report_error;
 use merc_unsafety::print_allocator_metrics;
 use merc_utilities::MercError;
 use merc_utilities::Timing;
-
-/// The protocol version this tool speaks (mCRL2 MBT <-> Adapter Protocol).
-const PROTOCOL_VERSION: &str = "0.2";
 
 #[derive(clap::ValueEnum, Clone, Debug)]
 enum LpsFormat {
@@ -68,6 +66,18 @@ struct Cli {
     /// Identifier reported to the adapter in the `hello` message; defaults to the LPS file name.
     #[arg(long)]
     lps_identifier: Option<String>,
+
+    /// Reject an adapter tau-closure depth above this bound with `unsupported_config`; 0 disables the check.
+    #[arg(long, default_value_t = 10_000)]
+    max_tau_closure_depth: usize,
+
+    /// Abort a tau-closure that exceeds this many states; 0 disables the check.
+    #[arg(long, default_value_t = 100_000)]
+    max_state_set_size: usize,
+
+    /// Number of per-state transition summaries retained; 0 disables the cache.
+    #[arg(long, default_value_t = 100_000)]
+    state_cache_limit: usize,
 }
 
 fn main() -> ExitCode {
@@ -98,12 +108,10 @@ fn main() -> ExitCode {
 }
 
 /// Loads the LPS and action partition, validates them against each other,
-/// connects to the adapter, and exchanges the protocol handshake.
-///
-/// The full session — the state-set/tau-closure semantics and the
-/// synchronous event loop that processes `get_enabled`/`input`/`output`/
-/// `quiescence` after the handshake — is not implemented yet; see
-/// `docs/merc-mbt-implementation-plan.md` (phases 3 and 4).
+/// connects to the adapter, and runs the session to completion: the protocol
+/// handshake followed by the synchronous event loop that processes
+/// `get_enabled`/`input`/`output`/`quiescence`/`reset` until the connection
+/// closes.
 fn handle_command(cli: &Cli, _timing: &Timing) -> Result<(), MercError> {
     let format = cli.format.clone().unwrap_or(LpsFormat::Lps);
     let lps = match format {
@@ -126,7 +134,9 @@ fn handle_command(cli: &Cli, _timing: &Timing) -> Result<(), MercError> {
         .clone()
         .unwrap_or_else(|| lps_identifier_from_path(&cli.filename));
 
-    let mut socket = connect_adapter(&cli.url)?;
+    let model = ModelState::new(explicit_lps, partition, cli.state_cache_limit, cli.max_state_set_size);
+
+    let socket = connect_adapter(&cli.url)?;
     info!("Connected to the adapter at `{}`.", cli.url);
 
     let hello = ToolMessage::Hello(ToolHello {
@@ -138,12 +148,13 @@ fn handle_command(cli: &Cli, _timing: &Timing) -> Result<(), MercError> {
         },
         lps: LpsInfo { identifier, hash: None },
     });
-    send_message(&mut socket, &hello)?;
 
-    let reply = read_frame(&mut socket)?;
-    info!("Adapter replied: {reply:?}");
+    let limits = SessionLimits {
+        max_tau_closure_depth: cli.max_tau_closure_depth,
+    };
 
-    close_session(&mut socket)?;
+    run_session(socket, model, limits, hello)?;
+    info!("Session ended.");
 
     Ok(())
 }

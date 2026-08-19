@@ -73,6 +73,26 @@ impl MultiActionKey {
     }
 }
 
+/// A human-readable rendering of a wire multi-action, for error and warning
+/// messages (e.g. `MbtError::InputNotEnabled`) — not used on the wire itself,
+/// where the structured [`WireMultiAction`] form is sent as-is.
+pub fn describe_multi_action(actions: &[WireAction]) -> String {
+    if actions.is_empty() {
+        return "tau".to_string();
+    }
+    actions
+        .iter()
+        .map(|action| {
+            if action.args.is_empty() {
+                action.name.clone()
+            } else {
+                format!("{}({})", action.name, action.args.join(", "))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
 /// Decomposes a single `Action(ActId(name, sorts), args)` term.
 fn decompose_action(action: ATerm) -> WireAction {
     let action_head = action.get_head_symbol();

@@ -7,9 +7,12 @@
 //! protocol summary and the phased implementation plan this crate follows.
 
 pub mod action;
+pub mod early_set;
 pub mod error;
+pub mod model;
 pub mod partition;
 pub mod protocol;
+pub mod session;
 pub mod transport;
 
 pub use action::MultiActionKey;
@@ -17,6 +20,10 @@ pub use action::WireAction;
 pub use action::WireMultiAction;
 pub use error::ErrorCode;
 pub use error::MbtError;
+pub use model::EnabledSet;
+pub use model::ModelState;
+pub use model::StateSet;
+pub use model::StateVector;
 pub use partition::ActionClass;
 pub use partition::ActionPartition;
 pub use partition::ActionPattern;
@@ -32,6 +39,7 @@ pub use protocol::GetEnabled;
 pub use protocol::Heartbeat;
 pub use protocol::LpsInfo;
 pub use protocol::Observation;
+pub use protocol::PROTOCOL_VERSION;
 pub use protocol::PeerInfo;
 pub use protocol::QuiescenceReport;
 pub use protocol::Reset;
@@ -41,6 +49,10 @@ pub use protocol::ToolMessage;
 pub use protocol::Warning;
 pub use protocol::WarningCode;
 pub use protocol::decode_frame;
+pub use session::MbtSession;
+pub use session::SessionLimits;
+pub use session::run_session;
+pub use transport::ReadDeadline;
 pub use transport::close_session;
 pub use transport::connect_adapter;
 pub use transport::read_frame;

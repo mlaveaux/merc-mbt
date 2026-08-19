@@ -1,6 +1,8 @@
+use std::io;
 use std::io::Read;
 use std::io::Write;
 use std::net::TcpStream;
+use std::time::Duration;
 
 use tungstenite::Message;
 use tungstenite::WebSocket;
@@ -8,6 +10,38 @@ use tungstenite::stream::MaybeTlsStream;
 
 use crate::error::MbtError;
 use crate::protocol::ToolMessage;
+
+/// Bounds the next blocking `WebSocket::read()` so the event loop can service
+/// its timers (heartbeats, the peer deadline, early-set expiries) without a
+/// dedicated thread.
+///
+/// `std::net::TcpStream::set_read_timeout(Some(Duration::ZERO))` is rejected
+/// with `InvalidInput`, so callers floor `timeout` above zero themselves; this
+/// trait does not re-check that.
+pub trait ReadDeadline {
+    fn set_read_deadline(&mut self, timeout: Duration) -> io::Result<()>;
+}
+
+impl ReadDeadline for TcpStream {
+    fn set_read_deadline(&mut self, timeout: Duration) -> io::Result<()> {
+        self.set_read_timeout(Some(timeout))
+    }
+}
+
+impl ReadDeadline for MaybeTlsStream<TcpStream> {
+    fn set_read_deadline(&mut self, timeout: Duration) -> io::Result<()> {
+        match self {
+            MaybeTlsStream::Plain(stream) => stream.set_read_deadline(timeout),
+            // No TLS feature is enabled (see the implementation plan's open
+            // question on TLS), so this arm is unreachable in practice; kept
+            // exhaustive because `MaybeTlsStream` is `#[non_exhaustive]`.
+            _ => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "read deadlines are only supported on a plain (non-TLS) stream",
+            )),
+        }
+    }
+}
 
 /// Connects to the adapter's WebSocket endpoint in blocking mode.
 ///
