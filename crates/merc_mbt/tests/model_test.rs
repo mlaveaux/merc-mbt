@@ -32,7 +32,7 @@ fn load_model(name: &str, mcrl2_text: &str, partition_text: &str) -> Option<Mode
     assert!(status.success(), "mcrl22lps failed with status: {status}");
 
     let lps = read_lps(lps_path.to_str().unwrap()).expect("Failed to read LPS");
-    let explicit = ExplicitLinearProcessSpecification::new(&lps).expect("Failed to build explicit LPS");
+    let explicit = ExplicitLinearProcessSpecification::new(lps).expect("Failed to build explicit LPS");
 
     let partition = parse_partition(partition_text).expect("Failed to parse partition");
     partition

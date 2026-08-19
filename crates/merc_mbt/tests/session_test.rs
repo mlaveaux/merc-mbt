@@ -66,7 +66,7 @@ fn simple_model(name: &str) -> Option<ModelState> {
     assert!(status.success(), "mcrl22lps failed with status: {status}");
 
     let lps = read_lps(lps_path.to_str().unwrap()).expect("Failed to read LPS");
-    let explicit = ExplicitLinearProcessSpecification::new(&lps).expect("Failed to build explicit LPS");
+    let explicit = ExplicitLinearProcessSpecification::new(lps).expect("Failed to build explicit LPS");
 
     let partition = parse_partition(PARTITION).expect("Failed to parse partition");
     partition

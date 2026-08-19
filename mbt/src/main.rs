@@ -118,7 +118,7 @@ fn handle_command(cli: &Cli, _timing: &Timing) -> Result<(), MercError> {
         LpsFormat::Lps => read_lps(&cli.filename)?,
         LpsFormat::Text => read_lps_text(&cli.filename)?,
     };
-    let explicit_lps = ExplicitLinearProcessSpecification::new(&lps)?;
+    let explicit_lps = ExplicitLinearProcessSpecification::new(lps)?;
 
     let partition_text = std::fs::read_to_string(&cli.partition)?;
     let partition = parse_partition(&partition_text)?;
