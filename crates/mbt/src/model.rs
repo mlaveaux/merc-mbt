@@ -50,11 +50,15 @@ pub struct EnabledSet {
 /// [`ActionPartition`], with a memoised per-state transition summary and the
 /// current symbolic state set.
 ///
-/// Implements the spec's state-set operations literally, including the
-/// documented quirk that because `current` is stored already tau-closed and
-/// every accepted observation re-closes it, the effective closure depth
-/// accumulates across observations (`τ*ₖ(τ*ₖ(S)) = τ*₂ₖ(S)`); see
-/// `docs/merc-mbt-implementation-plan.md` §"Open design questions", item 4.
+/// `current` is always stored *not* tau-closed: it holds exactly the active
+/// set produced by the last `reset`/`post`/quiescence-filter, never the
+/// result of closing it. Every read (`get_enabled`, `accept_*`) computes
+/// `τ*ₖ(current)` fresh against that active set instead. Closing an
+/// already-closed set again is not idempotent — a state at the previous
+/// closure's frontier gets `k` further steps on top of the `k` it already
+/// had — so storing the closure back into `current` would let the effective
+/// depth grow without bound across observations. Keeping `current` raw
+/// pins every closure to exactly `k` steps from the true active set.
 pub struct ModelState {
     context: ExplicitContext,
     lps: ExplicitLinearProcessSpecification,
@@ -117,9 +121,9 @@ impl ModelState {
     }
 
     /// Accepts an observed input `key` if it is enabled from the current
-    /// state set's tau closure, applying `S := τ*ₖ(post_a(τ*ₖ(S)))` and
-    /// returning whether it was accepted. `current` is left unchanged when it
-    /// is not.
+    /// state set's tau closure, applying `S := post_a(τ*ₖ(S))` (stored
+    /// un-closed; see [`ModelState`]'s docs) and returning whether it was
+    /// accepted. `current` is left unchanged when it is not.
     pub fn accept_input(&mut self, key: &MultiActionKey, tau_closure_depth: usize) -> Result<bool, MbtError> {
         self.accept_observation(key, tau_closure_depth, ActionClass::Input)
     }
@@ -139,8 +143,7 @@ impl ModelState {
         if !self.is_enabled(&closure, key, class)? {
             return Ok(false);
         }
-        let post = self.post(&closure, key)?;
-        self.current = self.tau_closure(&post, tau_closure_depth)?;
+        self.current = self.post(&closure, key)?;
         Ok(true)
     }
 

@@ -207,7 +207,10 @@ fn test_mcrl2_handshake_and_get_enabled() {
     assert_eq!(enabled["in_reply_to"], "g1");
     assert_eq!(enabled["inputs"], json!([multi_action("req")]));
     assert_eq!(enabled["outputs"], json!([]));
-    assert_eq!(enabled["quiescence"], false);
+    // Per the spec's quiescence formula (quantifies only over Act_out ∪
+    // {τ}), a state with only an input enabled is quiescent — see
+    // `test_mcrl2_quiescence_formula` in `model_test.rs`.
+    assert_eq!(enabled["quiescence"], true);
 }
 
 #[test]

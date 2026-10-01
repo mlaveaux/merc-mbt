@@ -13,7 +13,7 @@ pub const PROTOCOL_VERSION: &str = "0.2";
 /// A message received from the adapter, dispatched on the envelope's `type`
 /// field. Unknown top-level fields on any variant are ignored, per the
 /// protocol's forward-compatibility rule.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AdapterMessage {
     Hello(AdapterHello),
@@ -27,7 +27,7 @@ pub enum AdapterMessage {
 }
 
 /// A message sent to the adapter.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolMessage {
     Hello(ToolHello),
@@ -57,18 +57,18 @@ pub struct LpsInfo {
 
 /// `hello` sent by the adapter, carrying the authoritative session
 /// configuration.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdapterHello {
     pub role: String,
     pub protocol_version: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adapter: Option<PeerInfo>,
     #[serde(default)]
     pub config: SessionConfig,
 }
 
 /// `hello` sent by the MBT tool at the start of the session.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolHello {
     pub role: String,
     pub protocol_version: String,
@@ -79,7 +79,7 @@ pub struct ToolHello {
 /// Session configuration carried in the adapter's `hello`. Every field has a
 /// protocol-defined default, used both when the adapter omits `config`
 /// entirely and when it omits individual fields within it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionConfig {
     #[serde(default = "default_tau_closure_depth")]
     pub tau_closure_depth: usize,
@@ -134,32 +134,32 @@ pub struct Close {
 }
 
 /// `reset`, sent by the adapter to rewind the tool to the initial state.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Reset {
     pub id: String,
 }
 
 /// `get_enabled`, requesting the enabled set for the current state set.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetEnabled {
     pub id: String,
 }
 
 /// The payload shared by `input` and `output`: a reported multi-action.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Observation {
     pub id: String,
     pub multi_action: WireMultiAction,
 }
 
 /// `quiescence`, reporting that the adapter's silence timer has expired.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuiescenceReport {
     pub id: String,
 }
 
 /// `enabled`, the reply to `get_enabled`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Enabled {
     pub in_reply_to: String,
     pub inputs: Vec<WireMultiAction>,
@@ -186,7 +186,7 @@ pub enum WarningCode {
 
 /// `warning`, emitted when an output reaches the head of the queue
 /// unexpected and is held in the early set.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Warning {
     pub in_reply_to: String,
     pub code: WarningCode,
@@ -195,9 +195,9 @@ pub struct Warning {
 
 /// `error`. `in_reply_to` is omitted on the wire for errors not tied to a
 /// specific request.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorMessage {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub in_reply_to: Option<String>,
     pub code: ErrorCode,
     pub message: String,

@@ -32,12 +32,17 @@ impl ReadDeadline for MaybeTlsStream<TcpStream> {
     fn set_read_deadline(&mut self, timeout: Duration) -> io::Result<()> {
         match self {
             MaybeTlsStream::Plain(stream) => stream.set_read_deadline(timeout),
-            // No TLS feature is enabled (see the implementation plan's open
-            // question on TLS), so this arm is unreachable in practice; kept
-            // exhaustive because `MaybeTlsStream` is `#[non_exhaustive]`.
+            // `rustls::StreamOwned::sock` is the underlying transport (a
+            // `TcpStream` here); the deadline applies to the raw socket the
+            // same way it does for the plain case, independent of the TLS
+            // session layered on top of it.
+            MaybeTlsStream::Rustls(stream) => stream.sock.set_read_deadline(timeout),
+            // `MaybeTlsStream` is `#[non_exhaustive]`; kept exhaustive against
+            // a TLS backend other than rustls (e.g. `native-tls`), which this
+            // crate does not enable.
             _ => Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "read deadlines are only supported on a plain (non-TLS) stream",
+                "read deadlines are only supported on a plain or rustls-backed stream",
             )),
         }
     }
@@ -45,11 +50,9 @@ impl ReadDeadline for MaybeTlsStream<TcpStream> {
 
 /// Connects to the adapter's WebSocket endpoint in blocking mode.
 ///
-/// `url` is typically `ws://host:port/path`. A `wss://` URL fails here with
-/// a clear [`MbtError::Transport`] unless this crate later gains a TLS
-/// feature (an open question in the implementation plan) — this crate
-/// intentionally does not enable one yet, since the protocol's examples
-/// only ever show `ws://`.
+/// `url` is `ws://host:port/path` or `wss://host:port/path`; TLS is handled
+/// by `rustls` (via tungstenite's `rustls-tls-webpki-roots` feature), using
+/// the bundled Mozilla root store rather than the OS trust store.
 pub fn connect_adapter(url: &str) -> Result<WebSocket<MaybeTlsStream<TcpStream>>, MbtError> {
     let (socket, response) = tungstenite::connect(url)?;
     log::debug!("Connected to `{url}` (HTTP status {}).", response.status());
