@@ -1,0 +1,26 @@
+[package]
+name = "merc_mbt_adapter"
+description = "Interactive adapter-role peer for debugging merc-mbt by hand: a WebSocket server speaking the adapter side of the mCRL2 MBT <-> Adapter protocol."
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+merc_mbt.workspace = true
+merc_tools.workspace = true
+
+clap.workspace = true
+log.workspace = true
+serde_json.workspace = true
+shlex.workspace = true
+thiserror.workspace = true
+tungstenite.workspace = true
+
+[dev-dependencies]
+mcrl2.workspace = true
+merc_io.workspace = true
+merc_lps.workspace = true
