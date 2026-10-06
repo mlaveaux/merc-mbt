@@ -2,12 +2,10 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::action::WireMultiAction;
+use crate::action::SerializableMultiAction;
 use crate::error::ErrorCode;
 
-/// The protocol version this tool speaks (mCRL2 MBT <-> Adapter Protocol).
-/// Compared against the adapter's `hello.protocol_version` on major.minor
-/// only, per the protocol's compatibility rule.
+/// The protocol version this tool speaks.
 pub const PROTOCOL_VERSION: &str = "0.2";
 
 /// A message received from the adapter, dispatched on the envelope's `type`
@@ -85,8 +83,18 @@ pub struct SessionConfig {
     pub tau_closure_depth: usize,
     #[serde(default = "default_early_output_timeout_ms")]
     pub early_output_timeout_ms: u64,
+    /// How often the tool sends something (a `heartbeat`, or any other
+    /// message, which counts just as well) to the adapter absent other
+    /// traffic. `0` disables the tool's automatic sending entirely — useful
+    /// for a human-driven adapter (e.g. the debug REPL), which would
+    /// otherwise have to keep draining unsolicited heartbeat frames off the
+    /// socket between commands.
     #[serde(default = "default_heartbeat_interval_ms")]
     pub heartbeat_interval_ms: u64,
+    /// How long the tool waits without hearing anything from the adapter
+    /// before declaring it lost and closing the session. `0` disables the
+    /// check entirely — useful for a human-driven adapter (e.g. the debug
+    /// REPL), which has no business pace to heartbeat on.
     #[serde(default = "default_heartbeat_timeout_ms")]
     pub heartbeat_timeout_ms: u64,
 }
@@ -149,7 +157,7 @@ pub struct GetEnabled {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Observation {
     pub id: String,
-    pub multi_action: WireMultiAction,
+    pub multi_action: SerializableMultiAction,
 }
 
 /// `quiescence`, reporting that the adapter's silence timer has expired.
@@ -162,8 +170,8 @@ pub struct QuiescenceReport {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Enabled {
     pub in_reply_to: String,
-    pub inputs: Vec<WireMultiAction>,
-    pub outputs: Vec<WireMultiAction>,
+    pub inputs: Vec<SerializableMultiAction>,
+    pub outputs: Vec<SerializableMultiAction>,
     pub quiescence: bool,
 }
 
@@ -333,23 +341,23 @@ mod tests {
 
     #[test]
     fn enabled_reply_matches_spec_example() {
-        use crate::action::WireAction;
+        use crate::action::SerializableAction;
         use crate::protocol::Enabled;
         use crate::protocol::ToolMessage;
 
         let msg = ToolMessage::Enabled(Enabled {
             in_reply_to: "q-1".to_string(),
             inputs: vec![
-                vec![WireAction {
+                vec![SerializableAction {
                     name: "login".to_string(),
                     args: vec!["3".to_string()],
                 }],
-                vec![WireAction {
+                vec![SerializableAction {
                     name: "read".to_string(),
                     args: vec!["0".to_string()],
                 }],
             ],
-            outputs: vec![vec![WireAction {
+            outputs: vec![vec![SerializableAction {
                 name: "ack".to_string(),
                 args: vec!["3".to_string()],
             }]],

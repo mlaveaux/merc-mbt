@@ -13,17 +13,13 @@ debug = "line-tables-only"
 [workspace]
 resolver = "3"
 members = [
-    "crates/merc_mbt",
-    "mbt",
+    "crates/mbt",
+    "crates/mbt_adapter",
+    "tools/adapter",
+    "tools/mbt",
 ]
 
 [workspace.lints.rustdoc]
-# Several public functions/types intentionally link to crate-internal items
-# from their doc comments (e.g. to explain an implementation detail without
-# exposing it). Keep the links themselves (so a rename still trips the
-# separate, still-denied `broken_intra_doc_links` lint) but don't fail the
-# build just because the linked item isn't publicly reachable.
-private_intra_doc_links = "allow"
 
 [workspace.dependencies]
 clap = { version = "4.6", features = ["derive"] }
@@ -32,27 +28,20 @@ log = { version = "0.4", features = ["kv"] }
 rustc-hash = "2.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.11"
+shlex = "2.0"
 tempfile = "3.27"
-test-case = "3"
+test-case = "3.4"
 thiserror = "2.0"
+tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 
-# Synchronous WebSocket transport for merc_mbt (client role) and its test-side
-# mock adapter (server role).
-tungstenite = "0.30"
+# The workspace's own crates.
+merc_mbt = { path = "crates/mbt" }
+merc_mbt_adapter = { path = "crates/mbt_adapter" }
 
-# The workspace's own crate.
-merc_mbt = { path = "crates/merc_mbt" }
-
-# Pulled from the main merc repository (github.com/mlaveaux/merc), which owns
-# the LPS/data/aterm layer this tool is built on. Pinned by commit so a bump
-# is a deliberate, reviewable step; see README.md for the update procedure.
-#
-# Cargo resolves these by package name across the whole cloned repository, not
-# just its root workspace, so no `path =` is needed even though `mcrl2` and
-# `merc_lps` live in that repo's separate `tools/mcrl2` workspace. The same
-# `rev` must be repeated on every entry below (Cargo.toml has no variable
-# substitution) — see README.md for the update procedure when bumping it.
+# From the main merc repository
 mcrl2 = { git = "https://github.com/mlaveaux/merc", rev = "b8266a94a998cddb8b4e524b0ec82b363a102880" }
+merc_collections = { git = "https://github.com/mlaveaux/merc", rev = "b8266a94a998cddb8b4e524b0ec82b363a102880" }
 merc_explore = { git = "https://github.com/mlaveaux/merc", rev = "b8266a94a998cddb8b4e524b0ec82b363a102880", features = ["clap"] }
 merc_io = { git = "https://github.com/mlaveaux/merc", rev = "b8266a94a998cddb8b4e524b0ec82b363a102880" }
 merc_lps = { git = "https://github.com/mlaveaux/merc", rev = "b8266a94a998cddb8b4e524b0ec82b363a102880" }

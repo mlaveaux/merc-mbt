@@ -15,11 +15,8 @@ pub struct EarlyEntry {
 
 /// The set of pending early outputs, in insertion order.
 ///
-/// Deliberately holds `Instant`s rather than reading the clock itself: every
-/// method here is pure bookkeeping over a `now` passed in by the caller, so
-/// it can be exercised in tests with synthetic times instead of real sleeps.
-/// See `docs/merc-mbt-implementation-plan.md` §6.4 ("Deterministic timer
-/// testing").
+/// Deliberately holds `Instant`s rather than reading the clock itself, so it
+/// just uses whatever the called passes.
 #[derive(Debug, Default)]
 pub struct EarlySet {
     entries: VecDeque<EarlyEntry>,
@@ -58,6 +55,7 @@ impl EarlySet {
     pub fn take_expired(&mut self, now: Instant) -> Vec<EarlyEntry> {
         let mut expired = Vec::new();
         let mut remaining = VecDeque::with_capacity(self.entries.len());
+
         for entry in self.entries.drain(..) {
             if entry.deadline <= now {
                 expired.push(entry);
@@ -65,6 +63,7 @@ impl EarlySet {
                 remaining.push_back(entry);
             }
         }
+        
         self.entries = remaining;
         expired
     }
@@ -76,10 +75,6 @@ impl EarlySet {
 
     /// Finds the first pending entry (in insertion order) matching `key`,
     /// removing and returning it.
-    ///
-    /// Re-evaluation restarts the scan after each match (one match may enable
-    /// another), so only the first match per call matters; the caller loops
-    /// until this returns `None`.
     pub fn take_matching(&mut self, key: &MultiActionKey) -> Option<EarlyEntry> {
         let position = self.entries.iter().position(|e| &e.key == key)?;
         self.entries.remove(position)
@@ -96,7 +91,7 @@ mod tests {
     use crate::action::MultiActionKey;
 
     fn key(name: &str) -> MultiActionKey {
-        MultiActionKey::from_wire(&[crate::action::WireAction {
+        MultiActionKey::from_wire(&[crate::action::SerializableAction {
             name: name.to_string(),
             args: Vec::new(),
         }])

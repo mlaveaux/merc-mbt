@@ -1,9 +1,10 @@
 use std::fmt;
+use std::io::BufRead;
+use std::io::BufReader;
+use std::io::Read;
 
 use merc_lps::ExplicitLinearProcessSpecification;
 use merc_utilities::MercError;
-
-use crate::action::MultiActionKey;
 
 /// Whether an action belongs to the input or output alphabet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,11 +59,7 @@ impl ActionPartition {
     /// partition file — not on the hot path, since every `(name, arity)`
     /// pair used by the LPS is statically known from its summand templates.
     pub fn validate_against_lps(&self, lps: &ExplicitLinearProcessSpecification) -> Result<(), MercError> {
-        use merc_explore::LPS;
-
-        for summand in lps.summands() {
-            let multi_action = summand.multi_action().as_aterm();
-            let key = MultiActionKey::from_model(&multi_action);
+        for key in crate::action::lps_action_keys(lps) {
             if key.is_tau() {
                 // Tau summand: exempt from classification.
                 continue;
@@ -93,7 +90,7 @@ impl ActionPartition {
     }
 }
 
-/// Parses a partition file's text into an [`ActionPartition`].
+/// Parses a partition file, read from `reader`, into an [`ActionPartition`].
 ///
 /// Accepted grammar (a strict subset of the spec's proposal — comments `%`
 /// run to end of line, matching mCRL2):
@@ -105,8 +102,12 @@ impl ActionPartition {
 /// rule    := (dataexpr "->")? action ";"          // the guard is *parsed* but rejected in v1
 /// action  := ident ("(" ident ("," ident)* ")")?  // arguments must be distinct variable names
 /// ```
-pub fn parse_partition(text: &str) -> Result<ActionPartition, MercError> {
-    let tokens = tokenize(text)?;
+pub fn parse_partition<R: Read>(reader: R) -> Result<ActionPartition, MercError> {
+    let mut tokens = Vec::new();
+    for (line_no, line) in BufReader::new(reader).lines().enumerate() {
+        tokenize_line(&line?, line_no + 1, &mut tokens)?;
+    }
+
     let mut cursor = Cursor {
         tokens: &tokens,
         pos: 0,
@@ -357,28 +358,18 @@ struct Token {
     line: usize,
 }
 
-fn tokenize(text: &str) -> Result<Vec<Token>, PartitionError> {
-    let mut tokens = Vec::new();
-    let mut chars = text.chars().peekable();
-    let mut line = 1usize;
+/// Tokenizes one line of input, appending to `tokens`. Comments (`%` to end
+/// of line) and tokens never span lines, so the tokenizer can run a line at
+/// a time without look-ahead across line boundaries.
+fn tokenize_line(line_text: &str, line: usize, tokens: &mut Vec<Token>) -> Result<(), PartitionError> {
+    let mut chars = line_text.chars().peekable();
 
     while let Some(&c) = chars.peek() {
         match c {
-            '\n' => {
-                line += 1;
-                chars.next();
-            }
             c if c.is_whitespace() => {
                 chars.next();
             }
-            '%' => {
-                for c in chars.by_ref() {
-                    if c == '\n' {
-                        line += 1;
-                        break;
-                    }
-                }
-            }
+            '%' => break,
             '(' => {
                 chars.next();
                 tokens.push(Token {
@@ -460,7 +451,7 @@ fn tokenize(text: &str) -> Result<Vec<Token>, PartitionError> {
         }
     }
 
-    Ok(tokens)
+    Ok(())
 }
 
 /// Failure modes of [`parse_partition`] and [`ActionPartition::validate_against_lps`].
@@ -519,7 +510,7 @@ mod tests {
     #[test]
     fn parses_spec_example_minus_guards() {
         let text = "var v: Nat; w:Bool;\ninput\n  b(w);\noutput\n  c;\n";
-        let partition = parse_partition(text).unwrap();
+        let partition = parse_partition(text.as_bytes()).unwrap();
         assert_eq!(partition.classify("b", 1), Some(ActionClass::Input));
         assert_eq!(partition.classify("c", 0), Some(ActionClass::Output));
         assert_eq!(partition.classify("unknown", 0), None);
@@ -528,7 +519,7 @@ mod tests {
     #[test]
     fn skips_comments() {
         let text = "input\n  a; % an input action\noutput\n  b;\n";
-        let partition = parse_partition(text).unwrap();
+        let partition = parse_partition(text.as_bytes()).unwrap();
         assert_eq!(partition.classify("a", 0), Some(ActionClass::Input));
         assert_eq!(partition.classify("b", 0), Some(ActionClass::Output));
     }
@@ -536,7 +527,7 @@ mod tests {
     #[test]
     fn distinguishes_by_arity() {
         let text = "input\n  a;\n  a(x);\noutput\n  b;\n";
-        let partition = parse_partition(text).unwrap();
+        let partition = parse_partition(text.as_bytes()).unwrap();
         assert_eq!(partition.classify("a", 0), Some(ActionClass::Input));
         assert_eq!(partition.classify("a", 1), Some(ActionClass::Input));
     }
@@ -544,42 +535,42 @@ mod tests {
     #[test]
     fn rejects_guarded_rule() {
         let text = "var w: Bool;\ninput\n  w -> a(w);\noutput\n  b;\n";
-        let err = parse_partition(text).unwrap_err();
+        let err = parse_partition(text.as_bytes()).unwrap_err();
         assert!(err.to_string().contains("conditional rules are not supported"), "{err}");
     }
 
     #[test]
     fn rejects_duplicate_action_across_sections() {
         let text = "input\n  a;\noutput\n  a;\n";
-        let err = parse_partition(text).unwrap_err();
+        let err = parse_partition(text.as_bytes()).unwrap_err();
         assert!(err.to_string().contains("both an input and an output"), "{err}");
     }
 
     #[test]
     fn rejects_non_variable_argument() {
         let text = "input\n  a(3);\noutput\n  b;\n";
-        let err = parse_partition(text).unwrap_err();
+        let err = parse_partition(text.as_bytes()).unwrap_err();
         assert!(err.to_string().contains("expected a variable name"), "{err}");
     }
 
     #[test]
     fn rejects_duplicate_argument_name() {
         let text = "input\n  a(x, x);\noutput\n  b;\n";
-        let err = parse_partition(text).unwrap_err();
+        let err = parse_partition(text.as_bytes()).unwrap_err();
         assert!(err.to_string().contains("more than once"), "{err}");
     }
 
     #[test]
     fn rejects_missing_output_section() {
         let text = "input\n  a;\n";
-        let err = parse_partition(text).unwrap_err();
+        let err = parse_partition(text.as_bytes()).unwrap_err();
         assert!(err.to_string().contains("no `output` section"), "{err}");
     }
 
     #[test]
     fn rejects_missing_input_section() {
         let text = "output\n  a;\n";
-        let err = parse_partition(text).unwrap_err();
+        let err = parse_partition(text.as_bytes()).unwrap_err();
         assert!(err.to_string().contains("no `input` section"), "{err}");
     }
 }

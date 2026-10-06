@@ -9,7 +9,7 @@ use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 
 use crate::action::MultiActionKey;
-use crate::action::WireMultiAction;
+use crate::action::SerializableMultiAction;
 use crate::error::MbtError;
 use crate::partition::ActionClass;
 use crate::partition::ActionPartition;
@@ -40,8 +40,8 @@ struct StateSummary {
 
 /// The classified enabled set of a state set, as reported by `get_enabled`.
 pub struct EnabledSet {
-    pub inputs: Vec<WireMultiAction>,
-    pub outputs: Vec<WireMultiAction>,
+    pub inputs: Vec<SerializableMultiAction>,
+    pub outputs: Vec<SerializableMultiAction>,
     pub quiescence: bool,
 }
 

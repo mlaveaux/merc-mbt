@@ -22,11 +22,6 @@ pub enum ErrorCode {
 
 /// Every failure mode the MBT tool can encounter, from a malformed frame to
 /// an mCRL2 model error.
-///
-/// This is a dedicated error type rather than [`MercError`] because the
-/// error *identity* is a functional requirement here: the protocol's
-/// `error.code` field is part of the wire contract, and `MercError` is a
-/// type-erased catch-all with no discriminants to map back to a code.
 #[derive(Debug, thiserror::Error)]
 pub enum MbtError {
     #[error("malformed frame: {0}")]
@@ -99,11 +94,6 @@ impl MbtError {
     }
 }
 
-// `MercError` does not implement `std::error::Error` (see `merc_utilities`),
-// so it cannot be wrapped with `#[from]` (which requires `Error` for the
-// implied `#[source]`). This hand-written conversion is the alternative the
-// workspace convention calls for; it lets `?` turn a `MercError` from the
-// model layer into `MbtError::Model` at call sites.
 impl From<MercError> for MbtError {
     fn from(err: MercError) -> Self {
         MbtError::Model(err)

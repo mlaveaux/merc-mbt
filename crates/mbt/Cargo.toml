@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 mcrl2.workspace = true
+merc_collections.workspace = true
 merc_explore.workspace = true
 merc_lps.workspace = true
 merc_lts.workspace = true
@@ -24,7 +25,5 @@ thiserror.workspace = true
 tungstenite.workspace = true
 
 [dev-dependencies]
-env_logger.workspace = true
 merc_io.workspace = true
-tempfile.workspace = true
 test-case.workspace = true

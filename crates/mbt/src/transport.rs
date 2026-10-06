@@ -13,23 +13,25 @@ use crate::protocol::ToolMessage;
 
 /// Bounds the next blocking `WebSocket::read()` so the event loop can service
 /// its timers (heartbeats, the peer deadline, early-set expiries) without a
-/// dedicated thread.
+/// dedicated thread. `None` clears the deadline, letting `read()` block
+/// indefinitely — used when every timer is disabled and there is nothing to
+/// wake up for.
 ///
 /// `std::net::TcpStream::set_read_timeout(Some(Duration::ZERO))` is rejected
-/// with `InvalidInput`, so callers floor `timeout` above zero themselves; this
-/// trait does not re-check that.
+/// with `InvalidInput`, so callers floor a `Some` timeout above zero
+/// themselves; this trait does not re-check that.
 pub trait ReadDeadline {
-    fn set_read_deadline(&mut self, timeout: Duration) -> io::Result<()>;
+    fn set_read_deadline(&mut self, timeout: Option<Duration>) -> io::Result<()>;
 }
 
 impl ReadDeadline for TcpStream {
-    fn set_read_deadline(&mut self, timeout: Duration) -> io::Result<()> {
-        self.set_read_timeout(Some(timeout))
+    fn set_read_deadline(&mut self, timeout: Option<Duration>) -> io::Result<()> {
+        self.set_read_timeout(timeout)
     }
 }
 
 impl ReadDeadline for MaybeTlsStream<TcpStream> {
-    fn set_read_deadline(&mut self, timeout: Duration) -> io::Result<()> {
+    fn set_read_deadline(&mut self, timeout: Option<Duration>) -> io::Result<()> {
         match self {
             MaybeTlsStream::Plain(stream) => stream.set_read_deadline(timeout),
             // `rustls::StreamOwned::sock` is the underlying transport (a

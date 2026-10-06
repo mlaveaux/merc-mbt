@@ -81,8 +81,12 @@ pub struct MbtSession<S: Read + Write + ReadDeadline> {
     /// as a real operation and it makes the invariant assertable.
     queue: VecDeque<AdapterMessage>,
     early: EarlySet,
-    next_heartbeat_send: Instant,
-    peer_deadline: Instant,
+    /// `None` when `config.heartbeat_interval_ms == 0`, disabling the tool's
+    /// automatic sending.
+    next_heartbeat_send: Option<Instant>,
+    /// `None` when `config.heartbeat_timeout_ms == 0`, disabling the
+    /// peer-timeout check.
+    peer_deadline: Option<Instant>,
     hello: ToolMessage,
 }
 
@@ -96,8 +100,8 @@ impl<S: Read + Write + ReadDeadline> MbtSession<S> {
             socket,
             model,
             limits,
-            next_heartbeat_send: now + Duration::from_millis(config.heartbeat_interval_ms),
-            peer_deadline: now + Duration::from_millis(config.heartbeat_timeout_ms),
+            next_heartbeat_send: deadline_after(config.heartbeat_interval_ms, now),
+            peer_deadline: deadline_after(config.heartbeat_timeout_ms, now),
             config,
             phase: SessionPhase::AwaitingHello,
             queue: VecDeque::new(),
@@ -123,8 +127,7 @@ impl<S: Read + Write + ReadDeadline> MbtSession<S> {
 
             let timeout = self
                 .next_deadline()
-                .saturating_duration_since(now)
-                .max(MIN_READ_TIMEOUT);
+                .map(|deadline| deadline.saturating_duration_since(now).max(MIN_READ_TIMEOUT));
             self.socket
                 .get_mut()
                 .set_read_deadline(timeout)
@@ -177,7 +180,7 @@ impl<S: Read + Write + ReadDeadline> MbtSession<S> {
     /// timers before blocking on the socket again rather than assuming a
     /// single pass drained them all.
     fn service_timers(&mut self, now: Instant) -> Result<bool, MbtError> {
-        if now >= self.peer_deadline {
+        if self.peer_deadline.is_some_and(|deadline| now >= deadline) {
             log::warn!("Adapter heartbeat timed out; closing the session.");
             self.begin_close(Some("peer lost".to_string()))?;
             return Ok(true);
@@ -199,7 +202,7 @@ impl<S: Read + Write + ReadDeadline> MbtSession<S> {
             return Ok(true);
         }
 
-        if now >= self.next_heartbeat_send {
+        if self.next_heartbeat_send.is_some_and(|deadline| now >= deadline) {
             self.send(ToolMessage::Heartbeat(Heartbeat::default()))?;
             return Ok(true);
         }
@@ -209,8 +212,10 @@ impl<S: Read + Write + ReadDeadline> MbtSession<S> {
 
     /// The next instant the loop must wake up by, absent any inbound frame:
     /// the nearest of the next scheduled heartbeat send, the peer deadline,
-    /// and the earliest pending early-set expiry.
-    fn next_deadline(&self) -> Instant {
+    /// and the earliest pending early-set expiry — or `None` if all three
+    /// are disabled/empty, in which case the loop simply blocks on the
+    /// socket until a frame arrives.
+    fn next_deadline(&self) -> Option<Instant> {
         next_deadline(
             self.next_heartbeat_send,
             self.peer_deadline,
@@ -221,16 +226,17 @@ impl<S: Read + Write + ReadDeadline> MbtSession<S> {
     /// Sends `message` and resets the heartbeat send timer — the protocol
     /// requires at least one message of any kind every
     /// `heartbeat_interval_ms`, so every outbound message, not only
-    /// heartbeats, counts.
+    /// heartbeats, counts. A no-op on the timer when
+    /// `heartbeat_interval_ms == 0` disables it.
     fn send(&mut self, message: ToolMessage) -> Result<(), MbtError> {
         send_message(&mut self.socket, &message)?;
-        self.next_heartbeat_send = Instant::now() + Duration::from_millis(self.config.heartbeat_interval_ms);
+        self.next_heartbeat_send = deadline_after(self.config.heartbeat_interval_ms, Instant::now());
         Ok(())
     }
 
     /// Refreshes the peer deadline on any inbound frame, including Ping/Pong.
     fn note_inbound(&mut self) {
-        self.peer_deadline = Instant::now() + Duration::from_millis(self.config.heartbeat_timeout_ms);
+        self.peer_deadline = deadline_after(self.config.heartbeat_timeout_ms, Instant::now());
     }
 
     fn drain_queue(&mut self) -> Result<(), MbtError> {
@@ -309,8 +315,8 @@ impl<S: Read + Write + ReadDeadline> MbtSession<S> {
 
         self.config = hello.config;
         let now = Instant::now();
-        self.next_heartbeat_send = now + Duration::from_millis(self.config.heartbeat_interval_ms);
-        self.peer_deadline = now + Duration::from_millis(self.config.heartbeat_timeout_ms);
+        self.next_heartbeat_send = deadline_after(self.config.heartbeat_interval_ms, now);
+        self.peer_deadline = deadline_after(self.config.heartbeat_timeout_ms, now);
         self.phase = SessionPhase::Ready;
         log::info!(
             "Handshake complete with adapter {:?}; config = {:?}",
@@ -491,10 +497,17 @@ impl<S: Read + Write + ReadDeadline> MbtSession<S> {
         if let Some(reason) = &reason {
             log::info!("Closing the session: {reason}");
         }
-        self.send(ToolMessage::Close(Close { reason }))?;
+        // If the peer already sent a WebSocket-level close frame (this fires
+        // from the `Message::Close` arm in `run`), tungstenite has already
+        // queued its own close reply and taken the connection out of
+        // `Active`; writing anything else, including our own `close`
+        // message, would fail with `SendAfterClosing`.
+        if self.socket.can_write() {
+            self.send(ToolMessage::Close(Close { reason }))?;
+        }
         self.socket.close(None)?;
 
-        let _ = self.socket.get_mut().set_read_deadline(Duration::from_millis(500));
+        let _ = self.socket.get_mut().set_read_deadline(Some(Duration::from_millis(500)));
         while self.socket.read().is_ok() {}
         Ok(())
     }
@@ -526,16 +539,26 @@ pub fn run_session<S: Read + Write + ReadDeadline>(
     MbtSession::new(socket, model, limits, hello).run()
 }
 
+/// `now + ms`, or `None` if `ms == 0` disables the timer. Shared by
+/// `heartbeat_interval_ms` (the tool's own send schedule) and
+/// `heartbeat_timeout_ms` (the peer-timeout deadline) — both are "fire after
+/// this long of silence" timers that the same zero-disables convention
+/// applies to.
+fn deadline_after(ms: u64, now: Instant) -> Option<Instant> {
+    (ms != 0).then(|| now + Duration::from_millis(ms))
+}
+
 /// The nearest of the next heartbeat send, the peer deadline, and the
-/// earliest pending early-set expiry (if any). A free function over plain
-/// `Instant`s so the deadline-selection logic is testable without a live
-/// socket.
-fn next_deadline(next_heartbeat_send: Instant, peer_deadline: Instant, earliest_early: Option<Instant>) -> Instant {
-    let deadline = next_heartbeat_send.min(peer_deadline);
-    match earliest_early {
-        Some(early) => deadline.min(early),
-        None => deadline,
-    }
+/// earliest pending early-set expiry, considering only those that are
+/// enabled/present — or `None` if none of the three apply. A free function
+/// over plain `Instant`s so the deadline-selection logic is testable without
+/// a live socket.
+fn next_deadline(
+    next_heartbeat_send: Option<Instant>,
+    peer_deadline: Option<Instant>,
+    earliest_early: Option<Instant>,
+) -> Option<Instant> {
+    [next_heartbeat_send, peer_deadline, earliest_early].into_iter().flatten().min()
 }
 
 /// The `major.minor` prefix of a `major.minor[.patch]` version string, used
@@ -584,7 +607,7 @@ mod tests {
         let heartbeat = base + Duration::from_millis(100);
         let peer = base + Duration::from_millis(50);
         let early = Some(base + Duration::from_millis(200));
-        assert_eq!(next_deadline(heartbeat, peer, early), peer);
+        assert_eq!(next_deadline(Some(heartbeat), Some(peer), early), Some(peer));
     }
 
     #[test]
@@ -593,7 +616,7 @@ mod tests {
         let heartbeat = base + Duration::from_millis(100);
         let peer = base + Duration::from_millis(200);
         let early = base + Duration::from_millis(10);
-        assert_eq!(next_deadline(heartbeat, peer, Some(early)), early);
+        assert_eq!(next_deadline(Some(heartbeat), Some(peer), Some(early)), Some(early));
     }
 
     #[test]
@@ -601,7 +624,19 @@ mod tests {
         let base = Instant::now();
         let heartbeat = base + Duration::from_millis(100);
         let peer = base + Duration::from_millis(200);
-        assert_eq!(next_deadline(heartbeat, peer, None), heartbeat);
+        assert_eq!(next_deadline(Some(heartbeat), Some(peer), None), Some(heartbeat));
+    }
+
+    #[test]
+    fn next_deadline_ignores_disabled_peer_timeout() {
+        let base = Instant::now();
+        let heartbeat = base + Duration::from_millis(100);
+        assert_eq!(next_deadline(Some(heartbeat), None, None), Some(heartbeat));
+    }
+
+    #[test]
+    fn next_deadline_is_none_when_everything_disabled() {
+        assert_eq!(next_deadline(None, None, None), None);
     }
 
     #[test]
