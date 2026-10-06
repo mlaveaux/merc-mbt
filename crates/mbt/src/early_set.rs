@@ -2,13 +2,14 @@ use std::collections::VecDeque;
 use std::time::Instant;
 
 use crate::action::MultiActionKey;
+use crate::protocol::MessageId;
 
 /// One output reported by the adapter before the tool considered any output
 /// enabled ("early"), held pending re-evaluation against later state
 /// changes until it either matches or its own deadline expires.
 #[derive(Debug, Clone)]
 pub struct EarlyEntry {
-    pub id: String,
+    pub id: MessageId,
     pub key: MultiActionKey,
     pub deadline: Instant,
 }
@@ -97,9 +98,9 @@ mod tests {
         }])
     }
 
-    fn entry(id: &str, name: &str, deadline: Instant) -> EarlyEntry {
+    fn entry(id: u64, name: &str, deadline: Instant) -> EarlyEntry {
         EarlyEntry {
-            id: id.to_string(),
+            id,
             key: key(name),
             deadline,
         }
@@ -115,9 +116,9 @@ mod tests {
     fn earliest_deadline_picks_the_minimum() {
         let base = Instant::now();
         let mut set = EarlySet::default();
-        set.push(entry("a", "x", base + Duration::from_millis(200)));
-        set.push(entry("b", "y", base + Duration::from_millis(50)));
-        set.push(entry("c", "z", base + Duration::from_millis(100)));
+        set.push(entry(1, "x", base + Duration::from_millis(200)));
+        set.push(entry(2, "y", base + Duration::from_millis(50)));
+        set.push(entry(3, "z", base + Duration::from_millis(100)));
         assert_eq!(set.earliest_deadline(), Some(base + Duration::from_millis(50)));
     }
 
@@ -125,15 +126,12 @@ mod tests {
     fn take_expired_preserves_insertion_order_and_leaves_the_rest() {
         let base = Instant::now();
         let mut set = EarlySet::default();
-        set.push(entry("a", "x", base + Duration::from_millis(10)));
-        set.push(entry("b", "y", base + Duration::from_millis(20)));
-        set.push(entry("c", "z", base + Duration::from_millis(30)));
+        set.push(entry(1, "x", base + Duration::from_millis(10)));
+        set.push(entry(2, "y", base + Duration::from_millis(20)));
+        set.push(entry(3, "z", base + Duration::from_millis(30)));
 
         let expired = set.take_expired(base + Duration::from_millis(20));
-        assert_eq!(
-            expired.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
-            vec!["a", "b"]
-        );
+        assert_eq!(expired.iter().map(|e| e.id).collect::<Vec<_>>(), vec![1, 2]);
         assert_eq!(set.len(), 1);
         assert_eq!(set.earliest_deadline(), Some(base + Duration::from_millis(30)));
     }
@@ -142,7 +140,7 @@ mod tests {
     fn take_expired_at_exact_deadline_expires() {
         let base = Instant::now();
         let mut set = EarlySet::default();
-        set.push(entry("a", "x", base));
+        set.push(entry(1, "x", base));
         let expired = set.take_expired(base);
         assert_eq!(expired.len(), 1);
         assert!(set.is_empty());
@@ -158,13 +156,13 @@ mod tests {
     fn take_matching_removes_the_first_match_only() {
         let base = Instant::now();
         let mut set = EarlySet::default();
-        set.push(entry("a", "x", base + Duration::from_millis(10)));
-        set.push(entry("b", "x", base + Duration::from_millis(20)));
+        set.push(entry(1, "x", base + Duration::from_millis(10)));
+        set.push(entry(2, "x", base + Duration::from_millis(20)));
 
         let found = set.take_matching(&key("x")).unwrap();
-        assert_eq!(found.id, "a");
+        assert_eq!(found.id, 1);
         assert_eq!(set.len(), 1);
-        assert_eq!(set.take_matching(&key("x")).unwrap().id, "b");
+        assert_eq!(set.take_matching(&key("x")).unwrap().id, 2);
         assert!(set.take_matching(&key("x")).is_none());
     }
 
@@ -172,7 +170,7 @@ mod tests {
     fn take_matching_no_match_returns_none() {
         let base = Instant::now();
         let mut set = EarlySet::default();
-        set.push(entry("a", "x", base + Duration::from_millis(10)));
+        set.push(entry(1, "x", base + Duration::from_millis(10)));
         assert!(set.take_matching(&key("y")).is_none());
         assert_eq!(set.len(), 1);
     }
@@ -181,8 +179,8 @@ mod tests {
     fn clear_discards_everything_silently() {
         let base = Instant::now();
         let mut set = EarlySet::default();
-        set.push(entry("a", "x", base + Duration::from_millis(10)));
-        set.push(entry("b", "y", base + Duration::from_millis(20)));
+        set.push(entry(1, "x", base + Duration::from_millis(10)));
+        set.push(entry(2, "y", base + Duration::from_millis(20)));
         set.clear();
         assert!(set.is_empty());
         assert_eq!(set.earliest_deadline(), None);

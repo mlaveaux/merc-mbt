@@ -25,6 +25,7 @@ use crate::protocol::Enabled;
 use crate::protocol::ErrorMessage;
 use crate::protocol::GetEnabled;
 use crate::protocol::Heartbeat;
+use crate::protocol::MessageId;
 use crate::protocol::Observation;
 use crate::protocol::PROTOCOL_VERSION;
 use crate::protocol::QuiescenceReport;
@@ -377,7 +378,7 @@ impl<S: Read + Write + ReadDeadline> MbtSession<S> {
             // exactly one `warning` then one `error`, never an `ack`.
             let deadline = Instant::now() + Duration::from_millis(self.config.early_output_timeout_ms);
             self.early.push(EarlyEntry {
-                id: obs.id.clone(),
+                id: obs.id,
                 key,
                 deadline,
             });
@@ -470,7 +471,7 @@ impl<S: Read + Write + ReadDeadline> MbtSession<S> {
 
     /// Sends `error` for `err`, then closes the connection iff
     /// [`MbtError::is_fatal`] says this error code requires it.
-    fn reply_error(&mut self, in_reply_to: Option<String>, err: MbtError) -> Result<(), MbtError> {
+    fn reply_error(&mut self, in_reply_to: Option<MessageId>, err: MbtError) -> Result<(), MbtError> {
         log::warn!("{err}");
         let code = err.code();
         let message = err.to_string();
@@ -583,12 +584,12 @@ fn message_kind(msg: &AdapterMessage) -> &'static str {
     }
 }
 
-fn message_id(msg: &AdapterMessage) -> Option<String> {
+fn message_id(msg: &AdapterMessage) -> Option<MessageId> {
     match msg {
-        AdapterMessage::Reset(r) => Some(r.id.clone()),
-        AdapterMessage::GetEnabled(g) => Some(g.id.clone()),
-        AdapterMessage::Input(o) | AdapterMessage::Output(o) => Some(o.id.clone()),
-        AdapterMessage::Quiescence(q) => Some(q.id.clone()),
+        AdapterMessage::Reset(r) => Some(r.id),
+        AdapterMessage::GetEnabled(g) => Some(g.id),
+        AdapterMessage::Input(o) | AdapterMessage::Output(o) => Some(o.id),
+        AdapterMessage::Quiescence(q) => Some(q.id),
         AdapterMessage::Hello(_) | AdapterMessage::Heartbeat(_) | AdapterMessage::Close(_) => None,
     }
 }

@@ -156,13 +156,13 @@ fn test_mcrl2_handshake_and_get_enabled() {
 
         adapter.send(AdapterMessage::Hello(adapter_hello(20, 5_000))).unwrap();
         adapter
-            .send(AdapterMessage::GetEnabled(GetEnabled { id: "g1".to_string() }))
+            .send(AdapterMessage::GetEnabled(GetEnabled { id: 1 }))
             .unwrap();
 
         let ToolMessage::Enabled(enabled) = adapter.expect().unwrap() else {
             panic!("expected an `enabled` reply");
         };
-        assert_eq!(enabled.in_reply_to, "g1");
+        assert_eq!(enabled.in_reply_to, 1);
         assert_eq!(enabled.inputs, vec![multi_action("req")]);
         assert_eq!(enabled.outputs, Vec::<Vec<SerializableAction>>::new());
         // Per the spec's quiescence formula (quantifies only over Act_out ∪
@@ -191,20 +191,16 @@ fn test_mcrl2_get_enabled_before_hello_is_not_ready_and_survives() {
         let mut adapter = MockAdapter::accept(listener, READ_TIMEOUT).unwrap();
         assert!(matches!(adapter.expect().unwrap(), ToolMessage::Hello(_)));
 
-        adapter
-            .send(AdapterMessage::GetEnabled(GetEnabled {
-                id: "early".to_string(),
-            }))
-            .unwrap();
+        adapter.send(AdapterMessage::GetEnabled(GetEnabled { id: 2 })).unwrap();
         let ToolMessage::Error(error) = adapter.expect().unwrap() else {
             panic!("expected a `not_ready` error");
         };
         assert_eq!(error.code, ErrorCode::NotReady);
-        assert_eq!(error.in_reply_to.as_deref(), Some("early"));
+        assert_eq!(error.in_reply_to, Some(2));
 
         adapter.send(AdapterMessage::Hello(adapter_hello(20, 5_000))).unwrap();
         adapter
-            .send(AdapterMessage::GetEnabled(GetEnabled { id: "g1".to_string() }))
+            .send(AdapterMessage::GetEnabled(GetEnabled { id: 1 }))
             .unwrap();
         let ToolMessage::Enabled(_) = adapter.expect().unwrap() else {
             panic!("the session must survive to answer the later `get_enabled`");
@@ -234,12 +230,12 @@ fn test_mcrl2_unknown_type_closes_with_error() {
 
         // No `AdapterMessage` variant exists for an unrecognised `type` by
         // construction, so this one case keeps a raw frame.
-        adapter.send_raw(r#"{"type": "not_a_real_type", "id": "x"}"#).unwrap();
+        adapter.send_raw(r#"{"type": "not_a_real_type", "id": 99}"#).unwrap();
         let ToolMessage::Error(error) = adapter.expect().unwrap() else {
             panic!("expected an `unknown_type` error");
         };
         assert_eq!(error.code, ErrorCode::UnknownType);
-        assert_eq!(error.in_reply_to.as_deref(), Some("x"));
+        assert_eq!(error.in_reply_to, Some(99));
 
         let ToolMessage::Close(_) = adapter.expect().unwrap() else {
             panic!("expected the session to close after an unknown type");
@@ -343,7 +339,7 @@ fn test_mcrl2_input_accepted_and_rejected() {
         // regardless of the current state set.
         adapter
             .send(AdapterMessage::Input(Observation {
-                id: "bad".to_string(),
+                id: 1,
                 multi_action: multi_action("resp"),
             }))
             .unwrap();
@@ -351,19 +347,19 @@ fn test_mcrl2_input_accepted_and_rejected() {
             panic!("expected an `input_not_enabled` error");
         };
         assert_eq!(error.code, ErrorCode::InputNotEnabled);
-        assert_eq!(error.in_reply_to.as_deref(), Some("bad"));
+        assert_eq!(error.in_reply_to, Some(1));
 
         // `req` is enabled from the initial state.
         adapter
             .send(AdapterMessage::Input(Observation {
-                id: "good".to_string(),
+                id: 2,
                 multi_action: multi_action("req"),
             }))
             .unwrap();
         let ToolMessage::Ack { in_reply_to, kind } = adapter.expect().unwrap() else {
             panic!("expected an `ack` for the accepted input");
         };
-        assert_eq!(in_reply_to, "good");
+        assert_eq!(in_reply_to, 2);
         assert_eq!(kind, AckKind::Input);
 
         adapter.send(AdapterMessage::Close(Close { reason: None })).unwrap();
@@ -391,19 +387,19 @@ fn test_mcrl2_output_early_then_enabling_input_acks_in_order() {
         // `resp` is not enabled until `req` has been accepted.
         adapter
             .send(AdapterMessage::Output(Observation {
-                id: "o1".to_string(),
+                id: 1,
                 multi_action: multi_action("resp"),
             }))
             .unwrap();
         let ToolMessage::Warning(warning) = adapter.expect().unwrap() else {
             panic!("expected a `warning` for the early output");
         };
-        assert_eq!(warning.in_reply_to, "o1");
+        assert_eq!(warning.in_reply_to, 1);
         assert_eq!(warning.code, WarningCode::OutputEarly);
 
         adapter
             .send(AdapterMessage::Input(Observation {
-                id: "i1".to_string(),
+                id: 2,
                 multi_action: multi_action("req"),
             }))
             .unwrap();
@@ -414,7 +410,7 @@ fn test_mcrl2_output_early_then_enabling_input_acks_in_order() {
         else {
             panic!("expected the input's own `ack` first");
         };
-        assert_eq!(first_ack, "i1");
+        assert_eq!(first_ack, 2);
         assert_eq!(first_kind, AckKind::Input);
 
         let ToolMessage::Ack {
@@ -424,7 +420,7 @@ fn test_mcrl2_output_early_then_enabling_input_acks_in_order() {
         else {
             panic!("expected the early output's `ack` second");
         };
-        assert_eq!(second_ack, "o1", "the early output's ack must reference its own id");
+        assert_eq!(second_ack, 1, "the early output's ack must reference its own id");
         assert_eq!(second_kind, AckKind::Output);
 
         adapter.send(AdapterMessage::Close(Close { reason: None })).unwrap();
@@ -451,26 +447,26 @@ fn test_mcrl2_reset_discards_pending_early_silently() {
 
         adapter
             .send(AdapterMessage::Output(Observation {
-                id: "o1".to_string(),
+                id: 1,
                 multi_action: multi_action("resp"),
             }))
             .unwrap();
         let ToolMessage::Warning(warning) = adapter.expect().unwrap() else {
             panic!("expected a `warning` for the early output");
         };
-        assert_eq!(warning.in_reply_to, "o1");
+        assert_eq!(warning.in_reply_to, 1);
 
-        adapter.send(AdapterMessage::Reset(Reset { id: "r1".to_string() })).unwrap();
-        // If `reset` leaked a reply for the discarded `o1` entry, it would
+        adapter.send(AdapterMessage::Reset(Reset { id: 2 })).unwrap();
+        // If `reset` leaked a reply for the discarded early entry, it would
         // arrive here instead of the `reset_ack` — this panics with exactly
         // that frame's contents rather than silently passing.
         let ToolMessage::ResetAck { in_reply_to } = adapter.expect().unwrap() else {
             panic!("the discarded early entry must never be answered again");
         };
-        assert_eq!(in_reply_to, "r1");
+        assert_eq!(in_reply_to, 2);
 
         adapter
-            .send(AdapterMessage::GetEnabled(GetEnabled { id: "g1".to_string() }))
+            .send(AdapterMessage::GetEnabled(GetEnabled { id: 1 }))
             .unwrap();
         let ToolMessage::Enabled(enabled) = adapter.expect().unwrap() else {
             panic!("expected an `enabled` reply");

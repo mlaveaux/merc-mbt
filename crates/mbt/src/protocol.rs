@@ -8,6 +8,9 @@ use crate::error::ErrorCode;
 /// The protocol version this tool speaks.
 pub const PROTOCOL_VERSION: &str = "0.2";
 
+/// A message identifier.
+pub type MessageId = u64;
+
 /// A message received from the adapter, dispatched on the envelope's `type`
 /// field. Unknown top-level fields on any variant are ignored, per the
 /// protocol's forward-compatibility rule.
@@ -31,9 +34,9 @@ pub enum ToolMessage {
     Hello(ToolHello),
     Heartbeat(Heartbeat),
     Close(Close),
-    ResetAck { in_reply_to: String },
+    ResetAck { in_reply_to: MessageId },
     Enabled(Enabled),
-    Ack { in_reply_to: String, kind: AckKind },
+    Ack { in_reply_to: MessageId, kind: AckKind },
     Warning(Warning),
     Error(ErrorMessage),
 }
@@ -144,32 +147,32 @@ pub struct Close {
 /// `reset`, sent by the adapter to rewind the tool to the initial state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Reset {
-    pub id: String,
+    pub id: MessageId,
 }
 
 /// `get_enabled`, requesting the enabled set for the current state set.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetEnabled {
-    pub id: String,
+    pub id: MessageId,
 }
 
 /// The payload shared by `input` and `output`: a reported multi-action.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Observation {
-    pub id: String,
+    pub id: MessageId,
     pub multi_action: SerializableMultiAction,
 }
 
 /// `quiescence`, reporting that the adapter's silence timer has expired.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuiescenceReport {
-    pub id: String,
+    pub id: MessageId,
 }
 
 /// `enabled`, the reply to `get_enabled`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Enabled {
-    pub in_reply_to: String,
+    pub in_reply_to: MessageId,
     pub inputs: Vec<SerializableMultiAction>,
     pub outputs: Vec<SerializableMultiAction>,
     pub quiescence: bool,
@@ -196,7 +199,7 @@ pub enum WarningCode {
 /// unexpected and is held in the early set.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Warning {
-    pub in_reply_to: String,
+    pub in_reply_to: MessageId,
     pub code: WarningCode,
     pub message: String,
 }
@@ -206,7 +209,7 @@ pub struct Warning {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorMessage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub in_reply_to: Option<String>,
+    pub in_reply_to: Option<MessageId>,
     pub code: ErrorCode,
     pub message: String,
 }
@@ -229,7 +232,7 @@ const KNOWN_TYPES: &[&str] = &[
 #[derive(Debug, Clone)]
 pub struct DecodeError {
     pub code: ErrorCode,
-    pub in_reply_to: Option<String>,
+    pub in_reply_to: Option<MessageId>,
     pub message: String,
 }
 
@@ -259,7 +262,7 @@ pub fn decode_frame(text: &str) -> Result<AdapterMessage, DecodeError> {
     };
 
     // Recovered eagerly so every later error in this function can carry it.
-    let in_reply_to = obj.get("id").and_then(Value::as_str).map(str::to_string);
+    let in_reply_to = obj.get("id").and_then(Value::as_u64).map(|id| id as MessageId);
 
     let Some(type_field) = obj.get("type").and_then(Value::as_str) else {
         return Err(DecodeError {
@@ -292,7 +295,8 @@ mod tests {
     use super::AdapterMessage;
     use super::SessionConfig;
     use super::decode_frame;
-    use crate::error::ErrorCode;
+    use crate::MessageId;
+use crate::error::ErrorCode;
 
     #[test]
     fn config_defaults_when_absent() {
@@ -330,13 +334,13 @@ mod tests {
 
     #[test_case("{", ErrorCode::MalformedMessage, None; "not json")]
     #[test_case("[1,2]", ErrorCode::MalformedMessage, None; "not an object")]
-    #[test_case(r#"{"id":"x"}"#, ErrorCode::MalformedMessage, Some("x"); "missing type")]
-    #[test_case(r#"{"type":"nope","id":"x"}"#, ErrorCode::UnknownType, Some("x"); "unknown type")]
-    #[test_case(r#"{"type":"input","id":"i-1"}"#, ErrorCode::MalformedMessage, Some("i-1"); "missing multi_action")]
-    fn decode_frame_error_cases(frame: &str, expected_code: ErrorCode, expected_in_reply_to: Option<&str>) {
+    #[test_case(r#"{"id":7}"#, ErrorCode::MalformedMessage, Some(7); "missing type")]
+    #[test_case(r#"{"type":"nope","id":7}"#, ErrorCode::UnknownType, Some(7); "unknown type")]
+    #[test_case(r#"{"type":"input","id":1}"#, ErrorCode::MalformedMessage, Some(1); "missing multi_action")]
+    fn decode_frame_error_cases(frame: &str, expected_code: ErrorCode, expected_in_reply_to: Option<MessageId>) {
         let err = decode_frame(frame).expect_err("expected a decode error");
         assert_eq!(err.code, expected_code);
-        assert_eq!(err.in_reply_to.as_deref(), expected_in_reply_to);
+        assert_eq!(err.in_reply_to, expected_in_reply_to);
     }
 
     #[test]
@@ -346,7 +350,7 @@ mod tests {
         use crate::protocol::ToolMessage;
 
         let msg = ToolMessage::Enabled(Enabled {
-            in_reply_to: "q-1".to_string(),
+            in_reply_to: 1,
             inputs: vec![
                 vec![SerializableAction {
                     name: "login".to_string(),
@@ -366,7 +370,7 @@ mod tests {
 
         let json: serde_json::Value = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["type"], "enabled");
-        assert_eq!(json["in_reply_to"], "q-1");
+        assert_eq!(json["in_reply_to"], 1);
         assert_eq!(json["inputs"][0][0]["name"], "login");
         assert_eq!(json["inputs"][0][0]["args"][0], "3");
         assert_eq!(json["outputs"][0][0]["name"], "ack");

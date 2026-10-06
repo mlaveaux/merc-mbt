@@ -12,6 +12,7 @@ use merc_mbt::AdapterMessage;
 use merc_mbt::Close;
 use merc_mbt::GetEnabled;
 use merc_mbt::Heartbeat;
+use merc_mbt::MessageId;
 use merc_mbt::Observation;
 use merc_mbt::PROTOCOL_VERSION;
 use merc_mbt::PeerInfo;
@@ -36,14 +37,14 @@ const AUTO_RECV_TIMEOUT: Duration = Duration::from_secs(5);
 /// whole point of `poll` is a non-blocking check.
 const POLL_TIMEOUT: Duration = Duration::from_millis(200);
 
-/// Assigns request ids (`a1`, `a2`, ...), one per request-shaped command
-/// sent, so the tool's `in_reply_to` can be matched back to what was asked.
-struct IdGenerator(u64);
+/// Assigns request ids (`1`, `2`, ...), one per request-shaped command sent,
+/// so the tool's `in_reply_to` can be matched back to what was asked.
+struct IdGenerator(MessageId);
 
 impl IdGenerator {
-    fn next(&mut self) -> String {
+    fn next(&mut self) -> MessageId {
         self.0 += 1;
-        format!("a{}", self.0)
+        self.0
     }
 }
 

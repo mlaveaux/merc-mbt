@@ -31,6 +31,7 @@ pub use protocol::ErrorMessage;
 pub use protocol::GetEnabled;
 pub use protocol::Heartbeat;
 pub use protocol::LpsInfo;
+pub use protocol::MessageId;
 pub use protocol::Observation;
 pub use protocol::PROTOCOL_VERSION;
 pub use protocol::PeerInfo;
