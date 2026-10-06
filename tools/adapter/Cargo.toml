@@ -1,0 +1,25 @@
+[package]
+name = "merc-adapter"
+description = "Interactive adapter-role peer for debugging merc-mbt by hand."
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "merc-adapter"
+path = "src/main.rs"
+# Avoid a rustdoc output filename collision with the `merc_mbt_adapter` library crate.
+doc = false
+
+[dependencies]
+merc_mbt_adapter.workspace = true
+merc_tools.workspace = true
+merc_utilities.workspace = true
+
+clap.workspace = true
+env_logger.workspace = true
+log.workspace = true
