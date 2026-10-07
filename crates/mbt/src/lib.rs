@@ -46,6 +46,7 @@ pub use protocol::decode_frame;
 pub use session::MbtSession;
 pub use session::SessionLimits;
 pub use session::run_session;
+pub use session::run_session_with_message_log;
 pub use transport::ReadDeadline;
 pub use transport::close_session;
 pub use transport::connect_adapter;

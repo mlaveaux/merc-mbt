@@ -5,8 +5,7 @@
 //!
 //! Exists so integration tests (in this crate's own `tests/`, or anyone
 //! else's) can drive a scripted adapter without re-deriving the wire format
-//! by hand — see `docs/debug-adapter-and-testing-plan.md` at the workspace
-//! root for the rationale.
+//! by hand.
 
 use std::net::SocketAddr;
 use std::net::TcpListener;

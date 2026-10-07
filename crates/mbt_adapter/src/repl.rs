@@ -56,6 +56,7 @@ pub fn run<B: BufRead, W: Write>(
     mut input: B,
     output: &mut W,
 ) -> Result<(), AdapterError> {
+    handshake(&mut socket, output)?;
     writeln!(
         output,
         "adapter connected. Type `help` for the command list, `quit` to exit."
@@ -139,32 +140,51 @@ pub fn run<B: BufRead, W: Write>(
     Ok(())
 }
 
+/// Performs the protocol handshake as part of connecting, before the
+/// interactive loop starts: reads the tool's `hello` and replies with the
+/// adapter's own. This is initialization, not a REPL command — a human (or
+/// a script) driving the adapter should never need to remember to send
+/// `hello` themselves before everything else works.
+fn handshake(socket: &mut WebSocket<TcpStream>, output: &mut impl Write) -> Result<(), AdapterError> {
+    socket.get_ref().set_read_timeout(Some(AUTO_RECV_TIMEOUT))?;
+    loop {
+        match socket.read()? {
+            Message::Text(text) => {
+                print_frame(output, &text)?;
+                break;
+            }
+            Message::Ping(_) | Message::Pong(_) => continue,
+            other => panic!("expected the tool's `hello`, got: {other:?}"),
+        }
+    }
+
+    let hello = AdapterMessage::Hello(AdapterHello {
+        role: "adapter".to_string(),
+        protocol_version: PROTOCOL_VERSION.to_string(),
+        adapter: Some(PeerInfo {
+            name: "merc-adapter".to_string(),
+            version: Version.to_string(),
+        }),
+        // Disable automatic heartbeats and peer-timeout checks for the REPL
+        // environment.
+        config: SessionConfig {
+            heartbeat_interval_ms: 0,
+            heartbeat_timeout_ms: 0,
+            ..SessionConfig::default()
+        },
+    });
+    let text = serde_json::to_string_pretty(&hello)?;
+    send_text(socket, &text)?;
+    writeln!(output, "-> {text}")?;
+    writeln!(output, "Handshake complete.")?;
+    Ok(())
+}
+
 /// Builds the `AdapterMessage` for every [`Command`] variant that represents
 /// one. Only called for those variants (`Help`/`Quit`/`Recv`/`Poll`/`Raw`
 /// are handled directly in [`run`]), so the `unreachable!()` never fires.
 fn to_message(command: Command, ids: &mut IdGenerator) -> AdapterMessage {
     match command {
-        Command::Hello { protocol_version } => AdapterMessage::Hello(AdapterHello {
-            role: "adapter".to_string(),
-            protocol_version: protocol_version.unwrap_or_else(|| PROTOCOL_VERSION.to_string()),
-            adapter: Some(PeerInfo {
-                name: "merc-adapter".to_string(),
-                version: Version.to_string(),
-            }),
-            // A human at the keyboard paces far slower than any fixed
-            // heartbeat interval and has no reason to send `heartbeat`
-            // explicitly, so disable the tool's peer-timeout check
-            // (`heartbeat_timeout_ms: 0`) rather than get disconnected
-            // mid-thought. Also disable the tool's own automatic sending
-            // (`heartbeat_interval_ms: 0`): otherwise an unsolicited
-            // heartbeat can land between a command and its reply, and every
-            // `recv`/`poll` would have to loop to drain it off the socket.
-            config: SessionConfig {
-                heartbeat_interval_ms: 0,
-                heartbeat_timeout_ms: 0,
-                ..SessionConfig::default()
-            },
-        }),
         Command::Input { name, args } => AdapterMessage::Input(Observation {
             id: ids.next(),
             multi_action: vec![SerializableAction { name, args }],
@@ -258,7 +278,6 @@ fn print_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(
         output,
         "\
-hello [protocol_version]      send `hello` (role=adapter); defaults to this tool's own version
 input <name> [arg...]         send `input` with a single-action multi-action
 output <name> [arg...]        send `output` with a single-action multi-action
 quiescence                    send `quiescence`

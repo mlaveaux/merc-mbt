@@ -17,10 +17,8 @@ pub enum ActionClass {
 /// list.
 ///
 /// Conditional guards (`w -> a(w,v)`) are parsed but rejected in this
-/// version — see the crate's implementation plan (`docs/merc-mbt-implementation-plan.md`,
-/// section 2.5) for why: evaluating one needs a typed mCRL2 data expression
-/// over the LPS's own data specification, which the current FFI cannot
-/// produce.
+/// version: evaluating one needs a typed mCRL2 data expression over the
+/// LPS's own data specification, which the current FFI cannot produce.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActionPattern {
     pub name: String,

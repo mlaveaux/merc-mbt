@@ -28,7 +28,7 @@ fn load_model(name: &str, lps_text: &str, partition_text: &str) -> ModelState {
         .validate_against_lps(&explicit)
         .expect("Partition does not cover the LPS");
 
-    ModelState::new(explicit, partition, 0, 0)
+    ModelState::new(explicit, partition, 0)
 }
 
 fn action(name: &str, args: &[&str]) -> SerializableAction {

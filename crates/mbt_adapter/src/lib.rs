@@ -6,9 +6,6 @@
 //! itself, as a WebSocket *server* a human drives one command at a time
 //! from a REPL, so the tool's behaviour can be probed directly — without a
 //! real SUT, and without writing a new Rust test per scenario.
-//!
-//! See `docs/debug-adapter-and-testing-plan.md` at the workspace root for
-//! the rationale and the rest of the testing-strategy plan this fits into.
 
 mod command;
 mod error;

@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::fs::File;
 use std::io;
 use std::io::Read;
 use std::io::Write;
@@ -75,26 +76,40 @@ pub struct MbtSession<S: Read + Write + ReadDeadline> {
     limits: SessionLimits,
     config: SessionConfig,
     phase: SessionPhase,
-    /// The spec's single FIFO processing queue. With one thread it is
-    /// drained to empty after every read, so it holds at most one entry —
-    /// the FIFO ordering is structurally guaranteed rather than enforced.
-    /// Kept as an explicit field regardless, because `reset` must discard it
-    /// as a real operation and it makes the invariant assertable.
+    /// The spec's single FIFO processing queue.
     queue: VecDeque<AdapterMessage>,
+    
     early: EarlySet,
+    
     /// `None` when `config.heartbeat_interval_ms == 0`, disabling the tool's
     /// automatic sending.
     next_heartbeat_send: Option<Instant>,
     /// `None` when `config.heartbeat_timeout_ms == 0`, disabling the
     /// peer-timeout check.
     peer_deadline: Option<Instant>,
+    
     hello: ToolMessage,
+    
+    /// Every sent (`->`) and received (`<-`) message recorded in  file.
+    message_log: Option<File>,
 }
 
 impl<S: Read + Write + ReadDeadline> MbtSession<S> {
     /// Builds a session ready to run. `hello` is the tool's own `hello`
     /// message, sent as the first thing [`MbtSession::run`] does.
     pub fn new(socket: WebSocket<S>, model: ModelState, limits: SessionLimits, hello: ToolMessage) -> Self {
+        Self::with_message_log(socket, model, limits, hello, None)
+    }
+
+    /// As [`MbtSession::new`], additionally logging every sent/received wire
+    /// message to `message_log` if given.
+    pub fn with_message_log(
+        socket: WebSocket<S>,
+        model: ModelState,
+        limits: SessionLimits,
+        hello: ToolMessage,
+        message_log: Option<File>,
+    ) -> Self {
         let now = Instant::now();
         let config = SessionConfig::default();
         MbtSession {
@@ -108,6 +123,7 @@ impl<S: Read + Write + ReadDeadline> MbtSession<S> {
             queue: VecDeque::new(),
             early: EarlySet::default(),
             hello,
+            message_log,
         }
     }
 
@@ -137,6 +153,7 @@ impl<S: Read + Write + ReadDeadline> MbtSession<S> {
             match self.socket.read() {
                 Ok(Message::Text(text)) => {
                     self.note_inbound();
+                    self.log_message(&text);
                     match decode_frame(&text) {
                         Ok(msg) => {
                             self.queue.push_back(msg);
@@ -230,6 +247,7 @@ impl<S: Read + Write + ReadDeadline> MbtSession<S> {
     /// heartbeats, counts. A no-op on the timer when
     /// `heartbeat_interval_ms == 0` disables it.
     fn send(&mut self, message: ToolMessage) -> Result<(), MbtError> {
+        log_to(self.message_log.as_mut(), "->", &message);
         send_message(&mut self.socket, &message)?;
         self.next_heartbeat_send = deadline_after(self.config.heartbeat_interval_ms, Instant::now());
         Ok(())
@@ -238,6 +256,15 @@ impl<S: Read + Write + ReadDeadline> MbtSession<S> {
     /// Refreshes the peer deadline on any inbound frame, including Ping/Pong.
     fn note_inbound(&mut self) {
         self.peer_deadline = deadline_after(self.config.heartbeat_timeout_ms, Instant::now());
+    }
+
+    /// Appends a received raw wire message to the message log, if one is
+    /// configured.
+    fn log_message(&mut self, text: &str) {
+        match serde_json::from_str::<serde_json::Value>(text) {
+            Ok(value) => log_to(self.message_log.as_mut(), "<-", &value),
+            Err(_) => log_raw(self.message_log.as_mut(), "<-", text),
+        }
     }
 
     fn drain_queue(&mut self) -> Result<(), MbtError> {
@@ -504,7 +531,11 @@ impl<S: Read + Write + ReadDeadline> MbtSession<S> {
         // `Active`; writing anything else, including our own `close`
         // message, would fail with `SendAfterClosing`.
         if self.socket.can_write() {
-            self.send(ToolMessage::Close(Close { reason }))?;
+            // `reason` is only used for our own logging above: the tool's
+            // own `close` is always sent bare, never echoing whatever
+            // reason triggered it (an adapter-given reason, "peer lost",
+            // ...) back onto the wire.
+            self.send(ToolMessage::Close(Close { reason: None }))?;
         }
         self.socket.close(None)?;
 
@@ -538,6 +569,46 @@ pub fn run_session<S: Read + Write + ReadDeadline>(
     hello: ToolMessage,
 ) -> Result<(), MbtError> {
     MbtSession::new(socket, model, limits, hello).run()
+}
+
+/// As [`run_session`], additionally logging every sent/received wire message
+/// to `message_log` if given.
+pub fn run_session_with_message_log<S: Read + Write + ReadDeadline>(
+    socket: WebSocket<S>,
+    model: ModelState,
+    limits: SessionLimits,
+    hello: ToolMessage,
+    message_log: Option<File>,
+) -> Result<(), MbtError> {
+    MbtSession::with_message_log(socket, model, limits, hello, message_log).run()
+}
+
+/// Emits one entry for `value` (pretty-printed) at `debug` level, and, if
+/// `log` is given, also appends it to that file and flushes immediately so
+/// the file reflects every frame exchanged so far even if the session later
+/// panics or is killed. A file write/flush failure is deliberately
+/// swallowed: a full disk or a closed log file must not take down the
+/// session over what is purely a debugging aid.
+fn log_to<T: serde::Serialize>(log: Option<&mut File>, direction: &str, value: &T) {
+    let Ok(pretty) = serde_json::to_string_pretty(value) else {
+        return;
+    };
+    log::debug!("{direction} {pretty}");
+    if let Some(file) = log {
+        let _ = writeln!(file, "{direction} {pretty}");
+        let _ = file.flush();
+    }
+}
+
+/// As [`log_to`], but for text that is not necessarily JSON (e.g. a
+/// malformed frame): written verbatim rather than through a JSON
+/// serialiser, which would otherwise quote/escape it as a JSON string.
+fn log_raw(log: Option<&mut File>, direction: &str, text: &str) {
+    log::debug!("{direction} {text}");
+    if let Some(file) = log {
+        let _ = writeln!(file, "{direction} {text}");
+        let _ = file.flush();
+    }
 }
 
 /// `now + ms`, or `None` if `ms == 0` disables the timer. Shared by

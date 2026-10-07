@@ -86,7 +86,7 @@ fn simple_model(name: &str) -> Option<ModelState> {
         .validate_against_lps(&explicit)
         .expect("Partition does not cover the LPS");
 
-    Some(ModelState::new(explicit, partition, 0, 0))
+    Some(ModelState::new(explicit, partition, 0))
 }
 
 /// Connects to `addr` and runs an [`MbtSession`] over `model` to completion

@@ -22,7 +22,7 @@ use merc_mbt::ToolMessage;
 use merc_mbt::collect_lps_actions;
 use merc_mbt::connect_adapter;
 use merc_mbt::parse_partition;
-use merc_mbt::run_session;
+use merc_mbt::run_session_with_message_log;
 use merc_tools::VerbosityFlag;
 use merc_tools::Version;
 use merc_tools::VersionFlag;
@@ -91,13 +91,13 @@ struct RunArgs {
     #[arg(long, default_value_t = 10_000)]
     max_tau_closure_depth: usize,
 
-    /// Abort a tau-closure that exceeds this many states; 0 disables the check.
-    #[arg(long, default_value_t = 100_000)]
-    max_state_set_size: usize,
-
     /// Number of per-state transition summaries retained; 0 disables the cache.
     #[arg(long, default_value_t = 100_000)]
     state_cache_limit: usize,
+
+    /// Append every sent/received wire message to FILE, for debugging a session after the fact.
+    #[arg(long)]
+    log_messages: Option<PathBuf>,
 }
 
 #[derive(clap::Args, Debug)]
@@ -155,11 +155,14 @@ fn read_lps_file(filename: &str, format: Option<&LpsFormat>) -> Result<mcrl2::Li
 /// `get_enabled`/`input`/`output`/`quiescence`/`reset` until the connection
 /// closes.
 fn handle_run_command(args: &RunArgs, _timing: &Timing) -> Result<(), MercError> {
-    let lps = read_lps_file(&args.filename, args.format.as_ref())?;
-    let explicit_lps = ExplicitLinearProcessSpecification::new(lps)?;
+    let partition_file = File::open(&args.partition)
+        .map_err(|err| format!("failed to open partition file `{}`: {err}", args.partition.display()))?;
+    let partition: merc_mbt::ActionPartition = parse_partition(partition_file)
+        .map_err(|err| format!("failed to parse partition file `{}`: {err}", args.partition.display()))?;
 
-    let partition_file = File::open(&args.partition)?;
-    let partition: merc_mbt::ActionPartition = parse_partition(partition_file)?;
+    let lps = read_lps_file(&args.filename, args.format.as_ref())
+        .map_err(|err| format!("failed to load LPS file `{}`: {err}", args.filename))?;
+    let explicit_lps = ExplicitLinearProcessSpecification::new(lps)?;
     partition.validate_against_lps(&explicit_lps)?;
     info!(
         "Loaded LPS `{}` and validated the action partition `{}`.",
@@ -172,7 +175,7 @@ fn handle_run_command(args: &RunArgs, _timing: &Timing) -> Result<(), MercError>
         .clone()
         .unwrap_or_else(|| lps_identifier_from_path(&args.filename));
 
-    let model = ModelState::new(explicit_lps, partition, args.state_cache_limit, args.max_state_set_size);
+    let model = ModelState::new(explicit_lps, partition, args.state_cache_limit);
 
     let socket = connect_adapter(&args.url)?;
     info!("Connected to the adapter at `{}`.", args.url);
@@ -194,7 +197,17 @@ fn handle_run_command(args: &RunArgs, _timing: &Timing) -> Result<(), MercError>
         max_tau_closure_depth: args.max_tau_closure_depth,
     };
 
-    run_session(socket, model, limits, hello)?;
+    let message_log = match &args.log_messages {
+        Some(path) => {
+            let file = File::create(path)
+                .map_err(|err| format!("failed to create message log file `{}`: {err}", path.display()))?;
+            info!("Logging every sent/received wire message to `{}`.", path.display());
+            Some(file)
+        }
+        None => None,
+    };
+
+    run_session_with_message_log(socket, model, limits, hello, message_log)?;
     info!("Session ended.");
 
     Ok(())
@@ -205,7 +218,8 @@ fn handle_run_command(args: &RunArgs, _timing: &Timing) -> Result<(), MercError>
 /// user can classify each one as `input` or `output` without having to read
 /// the LPS by hand first.
 fn handle_info_command(args: &InfoArgs) -> Result<(), MercError> {
-    let lps = read_lps_file(&args.filename, args.format.as_ref())?;
+    let lps = read_lps_file(&args.filename, args.format.as_ref())
+        .map_err(|err| format!("failed to load LPS file `{}`: {err}", args.filename))?;
     let explicit_lps = ExplicitLinearProcessSpecification::new(lps)?;
 
     let actions = collect_lps_actions(&explicit_lps);
@@ -220,9 +234,6 @@ fn handle_info_command(args: &InfoArgs) -> Result<(), MercError> {
         args.filename,
         actions.len()
     );
-    for (name, arity) in &actions {
-        println!("  {name}/{arity}");
-    }
 
     println!("\nPartition file template (move each line into `input` or `output`):\n");
     println!("input");
@@ -261,7 +272,8 @@ fn lps_identifier_from_path(filename: &str) -> String {
 /// describing (`sha256:<hex>`) since the wire format names no fixed
 /// algorithm.
 fn lps_file_hash(filename: &str) -> Result<String, MercError> {
-    let bytes = std::fs::read(filename)?;
+    let bytes =
+        std::fs::read(filename).map_err(|err| format!("failed to read LPS file `{filename}` for hashing: {err}"))?;
     let digest = Sha256::digest(&bytes);
 
     let mut hex = String::with_capacity("sha256:".len() + digest.len() * 2);

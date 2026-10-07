@@ -12,9 +12,12 @@
 use clap::Parser;
 
 /// One REPL command. The request-shaped variants (`Input`, `Output`,
-/// `Quiescence`, `GetEnabled`, `Reset`, `Heartbeat`, `Close`, `Hello`) are
-/// turned into an `AdapterMessage` by the caller; the rest control the REPL
-/// itself.
+/// `Quiescence`, `GetEnabled`, `Reset`, `Heartbeat`, `Close`) are turned into
+/// an `AdapterMessage` by the caller; the rest control the REPL itself.
+///
+/// There is no `hello` command: the handshake is initialization (performed
+/// once, automatically, before the REPL prompt ever appears), not something
+/// a human or script drives interactively.
 #[derive(Parser, Debug, Clone, PartialEq, Eq)]
 #[command(multicall = true, disable_help_subcommand = true)]
 pub enum Command {
@@ -24,9 +27,6 @@ pub enum Command {
     /// Close the connection and exit
     #[command(aliases = ["exit", "q"])]
     Quit,
-    /// Send `hello`; an explicit protocol version overrides the default, for
-    /// exercising the adapter/tool version-mismatch path
-    Hello { protocol_version: Option<String> },
     /// Send `input` with a single-action multi-action
     Input {
         name: String,
@@ -150,21 +150,6 @@ mod tests {
     }
 
     #[test]
-    fn hello_without_version_is_none() {
-        assert_eq!(parse("hello").unwrap(), Command::Hello { protocol_version: None });
-    }
-
-    #[test]
-    fn hello_with_version() {
-        assert_eq!(
-            parse("hello 9.9").unwrap(),
-            Command::Hello {
-                protocol_version: Some("9.9".to_string())
-            }
-        );
-    }
-
-    #[test]
     fn close_collects_a_multi_word_reason() {
         assert_eq!(
             parse("close test finished early").unwrap(),
@@ -194,7 +179,6 @@ mod tests {
 
     #[test]
     fn commands_are_case_insensitive() {
-        assert_eq!(parse("HELLO").unwrap(), Command::Hello { protocol_version: None });
         assert_eq!(parse("RAW {}").unwrap(), Command::Raw("{}".to_string()));
     }
 

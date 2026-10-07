@@ -65,15 +65,8 @@ pub struct ModelState {
     partition: ActionPartition,
     current: StateSet,
     cache: FxHashMap<StateVector, Rc<StateSummary>>,
-    /// Maximum number of cached summaries; `0` disables the cache. On
-    /// overflow the cache is cleared wholesale, which is always safe since it
-    /// is a pure memo over a static transition relation.
+    /// Maximum number of cached entries; `0` disables the cache.
     cache_limit: usize,
-    /// Upper bound on the size of any tau closure computed, a partial
-    /// mitigation against an LPS whose enabled set is genuinely infinite
-    /// (`docs/merc-mbt-implementation-plan.md` §"Open design questions",
-    /// item 3); `0` disables the check.
-    max_state_set_size: usize,
     /// Reusable buffer holding the source state passed to `prepare`/
     /// `enumerate`, avoiding an allocation per call to `summarise`.
     scratch: StateVector,
@@ -84,12 +77,7 @@ impl ModelState {
     /// LPS's initial state. `partition` must already have passed
     /// [`ActionPartition::validate_against_lps`] against `lps` — this is not
     /// re-checked here.
-    pub fn new(
-        lps: ExplicitLinearProcessSpecification,
-        partition: ActionPartition,
-        cache_limit: usize,
-        max_state_set_size: usize,
-    ) -> Self {
+    pub fn new(lps: ExplicitLinearProcessSpecification, partition: ActionPartition, cache_limit: usize) -> Self {
         let context = lps.create_context();
         let mut current = StateSet::default();
         current.insert(lps.initial_state());
@@ -100,7 +88,6 @@ impl ModelState {
             current,
             cache: FxHashMap::default(),
             cache_limit,
-            max_state_set_size,
             scratch: Vec::new(),
         }
     }
@@ -182,14 +169,14 @@ impl ModelState {
                 }
             }
             frontier = next_frontier;
+        }
 
-            if self.max_state_set_size != 0 && closure.len() > self.max_state_set_size {
-                return Err(MbtError::Model(MercError::from(format!(
-                    "tau closure exceeded --max-state-set-size ({} states); \
-                     the LPS may have a genuinely infinite enabled set (e.g. `sum n: Nat . in(n) . P(n)`)",
-                    self.max_state_set_size
-                ))));
-            }
+        if !frontier.is_empty() {
+            log::warn!(
+                "Tau closure depth limit of {k} reached with {} state(s) still unexplored; \
+                 the closure may be incomplete.",
+                frontier.len()
+            );
         }
 
         debug_assert!(closure.is_superset(set), "tau closure must include the original set");
@@ -279,12 +266,14 @@ impl ModelState {
     /// summand indices that borrows `lps` and `scratch` but not `context`, so
     /// the `enumerate` calls that follow may still borrow `context` mutably.
     fn summarise(&mut self, state: &StateVector) -> Result<Rc<StateSummary>, MbtError> {
-        if let Some(summary) = self.cache.get(state) {
-            return Ok(Rc::clone(summary));
-        }
+        if self.cache_limit != 0 {
+            if let Some(summary) = self.cache.get(state) {
+                return Ok(Rc::clone(summary));
+            }
 
-        if self.cache_limit != 0 && self.cache.len() >= self.cache_limit {
-            self.cache.clear();
+            if self.cache.len() >= self.cache_limit {
+                self.cache.clear();
+            }
         }
 
         self.scratch.clear();
@@ -328,7 +317,9 @@ impl ModelState {
             steps,
             quiescent,
         });
-        self.cache.insert(state.clone(), Rc::clone(&summary));
+        if self.cache_limit != 0 {
+            self.cache.insert(state.clone(), Rc::clone(&summary));
+        }
         Ok(summary)
     }
 }
